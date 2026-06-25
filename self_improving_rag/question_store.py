@@ -1,9 +1,8 @@
 """
 Collects real questions asked through the chat UI for use in nightly optimization.
 
-Instead of tuning on hardcoded RAG questions, the optimizer uses questions
-the user actually asked against their own documents — making tuning relevant
-to their specific content and topics.
+Each user's questions are stored separately so the optimizer tunes on THEIR
+documents and topics, not a mix of every user's questions.
 """
 import json
 import logging
@@ -13,24 +12,28 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-_STORE_PATH = "data/user_questions.json"
-_MAX_STORED  = 200   # cap to avoid unbounded growth
+_MAX_STORED = 200   # cap per user to avoid unbounded growth
 
 
-def _load() -> List[Dict]:
+def _store_path(username: str) -> str:
     os.makedirs("data", exist_ok=True)
-    if not os.path.exists(_STORE_PATH):
+    safe = "".join(c for c in username if c.isalnum() or c == "_")[:32]
+    return f"data/questions_{safe}.json"
+
+
+def _load(username: str) -> List[Dict]:
+    path = _store_path(username)
+    if not os.path.exists(path):
         return []
     try:
-        with open(_STORE_PATH) as f:
+        with open(path) as f:
             return json.load(f)
     except Exception:
         return []
 
 
-def _save(records: List[Dict]) -> None:
-    os.makedirs("data", exist_ok=True)
-    with open(_STORE_PATH, "w") as f:
+def _save(username: str, records: List[Dict]) -> None:
+    with open(_store_path(username), "w") as f:
         json.dump(records, f, indent=2)
 
 
@@ -41,8 +44,8 @@ def record_question(
     question: str,
     composite_score: float,
 ) -> None:
-    """Save a question that was asked in the chat UI."""
-    records = _load()
+    """Save a question asked in the chat UI to that user's question bank."""
+    records = _load(username)
     records.append({
         "username":        username,
         "session_id":      session_id,
@@ -51,37 +54,30 @@ def record_question(
         "score":           round(composite_score, 4),
         "timestamp":       datetime.utcnow().isoformat(),
     })
-    # Keep newest _MAX_STORED records
-    _save(records[-_MAX_STORED:])
+    _save(username, records[-_MAX_STORED:])
 
 
-def get_questions_for_optimization(max_n: int = 20) -> List[Dict]:
+def get_questions_for_optimization(username: str, max_n: int = 20) -> List[Dict]:
     """
-    Return up to max_n questions for the optimizer to use.
-    Prioritises low-scoring questions (hardest to answer = most room to improve).
-    Falls back to all questions if fewer than 5 exist.
+    Return up to max_n questions for the optimizer.
+    Prioritises low-scoring questions (most room to improve).
     """
-    records = _load()
+    records = _load(username)
     if not records:
         return []
-    # deduplicate by question text (case-insensitive)
     seen, unique = set(), []
     for r in records:
         key = r["question"].strip().lower()
         if key not in seen:
             seen.add(key)
             unique.append(r)
-    # sort by score ascending — low scores first (most improvement potential)
     unique.sort(key=lambda r: r["score"])
     return unique[:max_n]
 
 
-def best_collection() -> Optional[str]:
-    """
-    Return the collection_name that appears most in stored questions
-    — i.e. the one the user chats with most, best target for optimization.
-    """
-    records = _load()
+def best_collection(username: str) -> Optional[str]:
+    """Return the collection_name this user chats with most — best optimizer target."""
+    records = _load(username)
     if not records:
         return None
     counts: Dict[str, int] = {}
@@ -92,5 +88,6 @@ def best_collection() -> Optional[str]:
     return max(counts, key=counts.__getitem__) if counts else None
 
 
-def question_count() -> int:
-    return len(_load())
+def question_count(username: str) -> int:
+    """Total questions recorded for this user."""
+    return len(_load(username))

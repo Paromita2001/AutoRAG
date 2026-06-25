@@ -3,6 +3,7 @@ chromadb>=1.5.0
 sentence-transformers>=2.7.0
 groq>=0.9.0
 instructor>=1.3.0
+openai>=1.0.0
 
 # LLM evaluation structured output
 pydantic>=2.0.0

@@ -79,7 +79,7 @@ def test_nightly_job_deploys_when_ab_passes(tmp_path):
         result = nightly_job(questions=["q1"], db_path=db, chroma_dir="/tmp/c")
 
     assert result["deployed"] is True
-    mock_save.assert_called_once_with(best_cfg)
+    mock_save.assert_called_once_with(best_cfg, username=None)
 
 
 def test_nightly_job_does_not_deploy_when_ab_fails(tmp_path):

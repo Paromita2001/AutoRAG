@@ -62,8 +62,12 @@ class GroqKeyPool:
         """
         Call chat.completions.create with automatic key rotation on 429.
         Tries every key up to `retries` total attempts.
+        TPD (tokens-per-day) rotates to the next key first — keys from different
+        orgs each have their own 100k limit, so rotation helps across orgs.
+        Only falls back to OpenRouter once ALL keys have hit TPD.
         """
         last_exc = None
+        tpd_hits: set = set()   # track which key indices have hit TPD this call
         for attempt in range(retries):
             client = self.current
             try:
@@ -72,6 +76,35 @@ class GroqKeyPool:
                 msg = str(exc)
                 is_rate_limit = "429" in msg or "rate_limit" in msg.lower() or "rate limit" in msg.lower()
                 if is_rate_limit:
+                    if "tokens per day" in msg.lower() or "tpd" in msg.lower():
+                        tpd_hits.add(self._index)
+                        logger.warning(
+                            "[groq] TPD hit on key %d/%d (%d/%d keys exhausted)",
+                            self._index + 1, len(self._keys),
+                            len(tpd_hits), len(self._keys),
+                        )
+                        if len(tpd_hits) >= len(self._keys):
+                            # All keys are TPD-exhausted — try OpenRouter
+                            logger.warning("[groq] All keys TPD exhausted — trying OpenRouter fallback")
+                            try:
+                                from .openrouter_client import (
+                                    chat_completions_create as _or_create,
+                                    GENERATION_MODELS,
+                                    available as _or_available,
+                                )
+                                if _or_available():
+                                    return _or_create(GENERATION_MODELS, **kwargs)
+                            except Exception as fb_exc:
+                                logger.warning("[openrouter] fallback failed: %s", fb_exc)
+                            raise RuntimeError(
+                                "⏳ Groq daily token limit reached on all keys. "
+                                "Add OPENROUTER_API_KEY to .env for automatic fallback, "
+                                "or try again tomorrow."
+                            ) from exc
+                        # Still have untried keys — rotate and retry immediately
+                        self._rotate()
+                        last_exc = exc
+                        continue
                     logger.warning(
                         "Rate limit on key %d (attempt %d/%d) — rotating",
                         self._index + 1, attempt + 1, retries,

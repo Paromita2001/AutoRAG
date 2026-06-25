@@ -26,10 +26,12 @@ def _get_collection(client: chromadb.PersistentClient, name: str) -> Any:
 
 class RAGPipeline:
     def __init__(self, config: RAGConfig, chroma_dir: str = "./chroma_db",
-                 collection_name: Optional[str] = None):
+                 collection_name: Optional[str] = None,
+                 expand_queries: bool = True):
         self.config = config
         self.chroma_dir = chroma_dir
         self._collection_name_override = collection_name  # per-chat isolation
+        self._expand_queries_enabled = expand_queries
         self._embedder: Optional[SentenceTransformer] = None
         self._groq_client: Optional[Groq] = None  # kept for test mocking
         self._pool: Optional[GroqKeyPool] = None
@@ -123,7 +125,7 @@ class RAGPipeline:
 
     def retrieve(self, query: str) -> List[Dict[str, Any]]:
         """Multi-query retrieval: expand query into alternatives, merge results, return top_k."""
-        queries = self._expand_queries(query)
+        queries = self._expand_queries(query) if self._expand_queries_enabled else [query]
         seen: Dict[str, Dict[str, Any]] = {}
         for q in queries:
             for chunk in self._retrieve_single(q):
@@ -134,24 +136,43 @@ class RAGPipeline:
         ranked = sorted(seen.values(), key=lambda c: c["score"], reverse=True)
         return ranked[:self.config.top_k]
 
+    _SYSTEM_PROMPT = (
+        "You are a precise document assistant. "
+        "Answer questions using ONLY the context provided. "
+        "Rules:\n"
+        "1. If the answer is clearly in the context: answer directly and completely.\n"
+        "2. If the context partially answers: share what you found and note gaps. "
+        "Start with: 'Based on your documents:'\n"
+        "3. If the context has nothing relevant: say exactly: "
+        "'I don't know based on the provided context.'\n"
+        "Never use training knowledge. Never invent facts."
+    )
+
+    _FALLBACK_SYSTEM_PROMPT = (
+        "You are a helpful, knowledgeable assistant. "
+        "Answer the question using your general knowledge. "
+        "Be accurate, concise, and honest about uncertainty."
+    )
+
     def generate(self, query: str, chunks: List[Dict[str, Any]]) -> str:
-        context = "\n\n".join(c["text"] for c in chunks) if chunks else "No context available."
-        prompt = (
-            "You are a document assistant. You MUST answer using ONLY the context below. "
-            "Never use your training knowledge — if it is not in the context, it is not the answer.\n\n"
-            "Rules (follow strictly):\n"
-            "1. If the answer is clearly stated in the context, answer directly and completely.\n"
-            "2. If the context mentions the topic but only partially answers, share exactly what "
-            "the context says and note what is missing. Start with: 'Based on your documents: ...'\n"
-            "3. If the context has no relevant information, say exactly: "
-            "'I don't know based on the provided context.'\n"
-            "NEVER invent, assume, or use knowledge outside the context.\n\n"
-            f"Context:\n{context}\n\n"
-            f"Question: {query}\n\nAnswer:"
-        )
+        if chunks:
+            context = "\n\n".join(c["text"] for c in chunks)
+            system = self._SYSTEM_PROMPT
+            user_msg = f"Context:\n{context}\n\nQuestion: {query}\n\nAnswer:"
+        else:
+            system = self._FALLBACK_SYSTEM_PROMPT
+            user_msg = (
+                f"Question: {query}\n\n"
+                "Note: No relevant documents were found. "
+                "Answer from general knowledge and start your reply with: "
+                "'*(No matching documents — answering from general knowledge)*'\n\nAnswer:"
+            )
         kwargs = dict(
             model=self.config.groq_model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user",   "content": user_msg},
+            ],
             temperature=self.config.temperature,
             max_tokens=768,
         )

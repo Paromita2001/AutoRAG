@@ -1,0 +1,66 @@
+[
+  {
+    "username": "auto",
+    "session_id": "bbb58c86e0",
+    "collection_name": "u_auto_bbb58c86e0",
+    "question": "what are iron rich food?",
+    "score": 1.0,
+    "timestamp": "2026-06-25T14:05:44.039244"
+  },
+  {
+    "username": "auto",
+    "session_id": "bbb58c86e0",
+    "collection_name": "u_auto_bbb58c86e0",
+    "question": "for women howmuch cal to take daily?",
+    "score": 0.46,
+    "timestamp": "2026-06-25T14:22:15.721160"
+  },
+  {
+    "username": "auto",
+    "session_id": "bbb58c86e0",
+    "collection_name": "u_auto_bbb58c86e0",
+    "question": "\nhow much protein should a women take daily",
+    "score": 0.84,
+    "timestamp": "2026-06-25T16:06:37.950853"
+  },
+  {
+    "username": "auto",
+    "session_id": "bbb58c86e0",
+    "collection_name": "u_auto_bbb58c86e0",
+    "question": "what all food contain zinc?",
+    "score": 0.0,
+    "timestamp": "2026-06-25T16:07:20.081974"
+  },
+  {
+    "username": "auto",
+    "session_id": "bbb58c86e0",
+    "collection_name": "u_auto_bbb58c86e0",
+    "question": "what all vitamins need daily ",
+    "score": 0.38,
+    "timestamp": "2026-06-25T16:09:57.853291"
+  },
+  {
+    "username": "auto",
+    "session_id": "bbb58c86e0",
+    "collection_name": "u_auto_bbb58c86e0",
+    "question": "WHAT SHOULD BE DONE IF BREAST-MILK IS NOT ADEQUATE?",
+    "score": 0.48,
+    "timestamp": "2026-06-25T16:12:14.957596"
+  },
+  {
+    "username": "auto",
+    "session_id": "bbb58c86e0",
+    "collection_name": "u_auto_bbb58c86e0",
+    "question": "\nWHAT SHOULD BE DONE IF BREAST-MILK IS NOT ADEQUATE?",
+    "score": 0.0,
+    "timestamp": "2026-06-25T16:43:42.832579"
+  },
+  {
+    "username": "auto",
+    "session_id": "bbb58c86e0",
+    "collection_name": "u_auto_bbb58c86e0",
+    "question": "WHAT SHOULD BE DONE IF BREAST-MILK IS NOT ADEQUATE?\n\n",
+    "score": 0.52,
+    "timestamp": "2026-06-25T16:44:12.040980"
+  }
+]

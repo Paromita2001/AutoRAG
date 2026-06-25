@@ -1,0 +1,82 @@
+[
+  {
+    "username": "autorag",
+    "session_id": "fe5faffe16",
+    "collection_name": "u_autorag_fe5faffe16",
+    "question": "what is rag?",
+    "score": 0.93,
+    "timestamp": "2026-06-25T17:22:03.185472"
+  },
+  {
+    "username": "autorag",
+    "session_id": "fe5faffe16",
+    "collection_name": "u_autorag_fe5faffe16",
+    "question": "why rag is used?",
+    "score": 0.96,
+    "timestamp": "2026-06-25T17:22:21.185733"
+  },
+  {
+    "username": "autorag",
+    "session_id": "fe5faffe16",
+    "collection_name": "u_autorag_fe5faffe16",
+    "question": "why embedding required in rag?",
+    "score": 0.96,
+    "timestamp": "2026-06-25T17:27:03.754278"
+  },
+  {
+    "username": "autorag",
+    "session_id": "fe5faffe16",
+    "collection_name": "u_autorag_fe5faffe16",
+    "question": "what are the agentic frameworks",
+    "score": 0.42,
+    "timestamp": "2026-06-25T17:36:18.547760"
+  },
+  {
+    "username": "autorag",
+    "session_id": "fe5faffe16",
+    "collection_name": "u_autorag_fe5faffe16",
+    "question": "what is llm?",
+    "score": 0.5,
+    "timestamp": "2026-06-25T17:43:27.170658"
+  },
+  {
+    "username": "autorag",
+    "session_id": "fe5faffe16",
+    "collection_name": "u_autorag_fe5faffe16",
+    "question": "tell me about agents",
+    "score": 0.5,
+    "timestamp": "2026-06-25T17:48:19.258700"
+  },
+  {
+    "username": "autorag",
+    "session_id": "fe5faffe16",
+    "collection_name": "u_autorag_fe5faffe16",
+    "question": "tell me about agents",
+    "score": 0.9,
+    "timestamp": "2026-06-25T17:51:31.344677"
+  },
+  {
+    "username": "autorag",
+    "session_id": "fe5faffe16",
+    "collection_name": "u_autorag_fe5faffe16",
+    "question": "tell me how agents works",
+    "score": 0.8,
+    "timestamp": "2026-06-25T18:23:09.549460"
+  },
+  {
+    "username": "autorag",
+    "session_id": "fe5faffe16",
+    "collection_name": "u_autorag_fe5faffe16",
+    "question": "what is langchain",
+    "score": 0.6,
+    "timestamp": "2026-06-25T18:25:27.773540"
+  },
+  {
+    "username": "autorag",
+    "session_id": "fe5faffe16",
+    "collection_name": "u_autorag_fe5faffe16",
+    "question": "what is langgraph",
+    "score": 0.72,
+    "timestamp": "2026-06-25T18:26:02.942654"
+  }
+]

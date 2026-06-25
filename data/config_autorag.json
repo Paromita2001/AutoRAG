@@ -1,0 +1,10 @@
+{
+  "embedding_model": "all-MiniLM-L6-v2",
+  "chunk_size": 384,
+  "overlap": 32,
+  "top_k": 9,
+  "temperature": 0.3005575058716044,
+  "groq_model": "llama-3.3-70b-versatile",
+  "rerank": false,
+  "similarity_threshold": 0.5248435466776273
+}

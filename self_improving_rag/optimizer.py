@@ -1,4 +1,5 @@
 ﻿import logging
+import time
 from typing import Any, Dict, List, Optional
 
 import optuna
@@ -30,7 +31,7 @@ class RAGOptimizer:
         storage: RAGStorage,
         chroma_dir: str = "./chroma_db",
         study_name: str = "rag_optimization",
-        n_trials: int = 30,
+        n_trials: int = 10,
         groq_api_key: Optional[str] = None,
         collection_name: Optional[str] = None,
     ):
@@ -44,10 +45,18 @@ class RAGOptimizer:
         self._best_config: Optional[RAGConfig] = None
 
     def _suggest_config(self, trial: optuna.Trial) -> RAGConfig:
-        return RAGConfig(
-            embedding_model=trial.suggest_categorical(
+        # If testing against a user collection, lock embedding model to match
+        # what it was indexed with (all-MiniLM-L6-v2 = 384 dims).
+        # Trying BAAI/bge-large-en-v1.5 (1024 dims) against a 384-dim collection
+        # causes a ChromaDB dimension mismatch error on every trial.
+        if self.collection_name:
+            embedding_model = "all-MiniLM-L6-v2"
+        else:
+            embedding_model = trial.suggest_categorical(
                 "embedding_model", SEARCH_SPACE["embedding_model"]
-            ),
+            )
+        return RAGConfig(
+            embedding_model=embedding_model,
             chunk_size=trial.suggest_int("chunk_size", *SEARCH_SPACE["chunk_size"], step=64),
             overlap=trial.suggest_int("overlap", *SEARCH_SPACE["overlap"], step=32),
             top_k=trial.suggest_int("top_k", *SEARCH_SPACE["top_k"]),
@@ -58,10 +67,17 @@ class RAGOptimizer:
         )
 
     def _objective(self, trial: optuna.Trial) -> float:
+        # Throttle: 30 RPM shared across all keys. With 4 questions × 2 Groq calls each = 8
+        # calls per trial. Sleep 16 s before each trial (except the first) to stay under limit.
+        if trial.number > 0:
+            time.sleep(16)
+
         config = self._suggest_config(trial)
         pipeline = RAGPipeline(config, chroma_dir=self.chroma_dir,
-                               collection_name=self.collection_name)
+                               collection_name=self.collection_name,
+                               expand_queries=False)  # no expansion — saves 2 Groq calls/question
         scores: List[float] = []
+        api_failures = 0
         for i, question in enumerate(self.questions):
             try:
                 result = pipeline.query(question)
@@ -88,8 +104,17 @@ class RAGOptimizer:
             except optuna.TrialPruned:
                 raise
             except Exception as exc:
+                msg = str(exc)
                 logger.warning("Trial %d / question %d failed: %s", trial.number, i, exc)
-                scores.append(0.0)
+                # Both Groq and OpenRouter exhausted — stop the entire study
+                if "daily token limit" in msg or "All OpenRouter" in msg:
+                    api_failures += 1
+                    if api_failures >= 2:
+                        raise RuntimeError(
+                            "⏳ All API providers exhausted (Groq TPD + OpenRouter rate-limited). "
+                            "Optimizer paused — try again in a few hours."
+                        )
+                scores.append(0.5)  # neutral score, don't punish config for API failure
 
         mean_score = sum(scores) / len(scores) if scores else 0.0
         self.storage.save_trial(

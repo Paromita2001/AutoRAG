@@ -2,6 +2,7 @@
 import json
 import os
 from datetime import datetime
+from typing import Optional
 
 import pandas as pd
 import plotly.express as px
@@ -129,11 +130,9 @@ def _user_cfg() -> RAGConfig:
     )
 
 
-def _load_optuna_cfg() -> RAGConfig:
-    if os.path.exists("current_config.json"):
-        with open("current_config.json") as f:
-            return RAGConfig.from_dict(json.load(f))
-    return RAGConfig()
+def _load_optuna_cfg(username: Optional[str] = None) -> RAGConfig:
+    from .scheduler import load_current_config
+    return load_current_config(username=username)
 
 
 def _chat_collection(username: str, session_id: str) -> str:
@@ -341,7 +340,7 @@ def _sidebar(chroma_dir: str) -> str:
     with st.sidebar:
         # ── Brand + optimizer progress ────────────────────────────────────────
         _THRESHOLD = 10
-        q_count    = question_count()
+        q_count    = question_count(user)
         filled     = min(q_count, _THRESHOLD)
         pct        = filled / _THRESHOLD          # 0.0 – 1.0
         bar_filled = int(pct * 10)                # 0–10 blocks
@@ -386,25 +385,44 @@ def _sidebar(chroma_dir: str) -> str:
 
         # "Optimize Now" button — visible once 3+ questions collected
         if q_count >= 3:
-            if st.button("⚡ Optimize Now", key="sb_opt_now", use_container_width=True,
-                         help=f"Run optimizer immediately using your {q_count} real questions"):
-                with st.spinner("Running optimizer on your questions… (takes ~1–2 min)"):
+            from .scheduler import OPTIMIZER_LOCK
+            opt_running = OPTIMIZER_LOCK.locked()
+
+            if opt_running:
+                st.markdown(
+                    f'<div style="padding:.4rem .75rem;font-size:.68rem;color:#f59e0b">'
+                    f'⏳ Optimizer is running…</div>',
+                    unsafe_allow_html=True,
+                )
+            elif st.button("⚡ Optimize Now", key="sb_opt_now", use_container_width=True,
+                           help=f"Run optimizer using your {q_count} questions (~3 min)"):
+                with st.spinner("Optimizing… 10 trials, ~16 s each. Please wait (~3 min)."):
                     try:
-                        from .scheduler import nightly_job
-                        result = nightly_job(
-                            questions=[],   # scheduler will load from question_store
-                            chroma_dir=chroma_dir,
-                        )
-                        deployed = result.get("deployed", False)
-                        best     = result.get("best_score")
-                        st.session_state["_last_opt_count"] = q_count
-                        if deployed:
-                            st.success(f"✅ New config deployed! Best score: {best:.3f}")
+                        from .scheduler import nightly_job, OPTIMIZER_LOCK as _LOCK
+                        if not _LOCK.acquire(blocking=False):
+                            st.warning("Optimizer already running in background — try again shortly.")
                         else:
-                            st.info(f"Ran {result.get('n_trials',0)} trials. "
-                                    f"Best score {best:.3f} — existing config kept (already optimal).")
+                            try:
+                                result = nightly_job(questions=[], chroma_dir=chroma_dir,
+                                                     username=user)
+                                deployed = result.get("deployed", False)
+                                best     = result.get("best_score")
+                                st.session_state["_last_opt_count"] = q_count
+                                if deployed:
+                                    st.success(f"✅ New config deployed! Best score: {best:.3f}")
+                                elif best is not None:
+                                    st.info(f"Ran {result.get('n_trials',0)} trials — "
+                                            f"best score {best:.3f}. Existing config kept (already optimal).")
+                                else:
+                                    st.warning("No completed trials. Check logs for details.")
+                            finally:
+                                _LOCK.release()
                     except Exception as exc:
-                        st.error(f"Optimizer error: {exc}")
+                        msg = str(exc)
+                        if "daily token limit" in msg or "API providers exhausted" in msg or "All OpenRouter" in msg:
+                            st.warning(msg)
+                        else:
+                            st.error(f"Optimizer error: {exc}")
                 st.rerun()
 
         st.markdown('</div>', unsafe_allow_html=True)
@@ -541,7 +559,8 @@ def _chat_page(chroma_dir: str) -> None:
     doc_count       = _doc_count(chroma_dir, col_name)
 
     # ── Top bar ───────────────────────────────────────────────────────────────
-    top_left, top_right = st.columns([8, 2])
+    show_up = st.session_state.get("show_upload", doc_count == 0)
+    top_left, top_right = st.columns([7, 3])
     with top_left:
         session_data = get_session(user, sid) or {}
         title        = session_data.get("title", "New Chat")
@@ -554,33 +573,16 @@ def _chat_page(chroma_dir: str) -> None:
         doc_color = GREEN_L if doc_count else RED_L
         doc_text  = GREEN   if doc_count else RED
         st.markdown(
-            f'<div style="padding:.85rem 1rem .4rem;text-align:right">'
+            f'<div style="padding:.9rem .5rem .3rem;text-align:right">'
             f'<span style="background:{doc_color};color:{doc_text};border-radius:99px;'
-            f'padding:.2rem .7rem;font-size:.7rem;font-weight:700">'
-            f'{"📚 " + str(doc_count) + " chunks" if doc_count else "⚠️ No docs yet"}'
+            f'padding:.2rem .65rem;font-size:.7rem;font-weight:700">'
+            f'{"📚 " + str(doc_count) + " chunks" if doc_count else "⚠️ No docs"}'
             f'</span></div>',
             unsafe_allow_html=True,
         )
 
-    st.markdown(f'<div style="height:1px;background:{BORDER};margin:0 1.5rem"></div>',
+    st.markdown(f'<div style="height:1px;background:{BORDER};margin:0 1.5rem .5rem"></div>',
                 unsafe_allow_html=True)
-
-    # ── Upload expander (always accessible, compact) ───────────────────────
-    with st.expander(
-        "📂  Upload documents or URLs" if doc_count == 0 else f"📂  Add more  ·  {doc_count:,} chunks indexed",
-        expanded=doc_count == 0,
-    ):
-        _upload_widget(chroma_dir, cfg, col_name)
-
-    if doc_count == 0:
-        st.markdown(
-            f'<div style="text-align:center;padding:3rem 1rem;color:{MUTED}">'
-            f'<div style="font-size:1.5rem;margin-bottom:.5rem">☝️</div>'
-            f'<div style="font-size:.9rem">Upload documents above, then start chatting.</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-        return
 
     # ── Chat messages ─────────────────────────────────────────────────────────
     _not_found_phrases = (
@@ -588,179 +590,251 @@ def _chat_page(chroma_dir: str) -> None:
         "i do not know based on the provided context",
     )
 
-    for msg in messages:
-        with st.chat_message(msg["role"], avatar="🧑" if msg["role"] == "user" else "🤖"):
-            st.markdown(msg["content"])
-            if msg.get("scores") and msg["role"] == "assistant":
-                s            = msg["scores"]
-                is_not_found = any(p in msg["content"].lower() for p in _not_found_phrases)
-                if is_not_found:
-                    st.markdown(
-                        f'<div style="background:{AMBER_L};border:1px solid {AMBER};'
-                        f'border-radius:10px;padding:.5rem .85rem;font-size:.78rem;color:#92400e">'
-                        f'⚠️ Not found in your documents.</div>',
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    st.markdown(
-                        _score_badge("Faithfulness", s.get("faithfulness", 0)) + " " +
-                        _score_badge("Relevance",    s.get("relevance",    0)) + " " +
-                        _score_badge("Composite",    s.get("composite",    0)) +
-                        f' <span style="font-size:.67rem;color:{MUTED};margin-left:.35rem">'
-                        f'⏱ {s.get("retrieval_ms","?")} ms · {s.get("generation_ms","?")} ms</span>',
-                        unsafe_allow_html=True,
-                    )
-            if msg.get("chunks"):
-                with st.expander(f"📎 {len(msg['chunks'])} sources"):
-                    for i, chunk in enumerate(msg["chunks"], 1):
-                        src   = os.path.basename(chunk.get("metadata", {}).get("source", "")) or "—"
-                        score = chunk.get("score", 0)
-                        st.markdown(
-                            f'<div style="margin-bottom:.6rem;padding:.75rem;background:{BG};'
-                            f'border-radius:9px;border-left:3px solid {P}">'
-                            f'<div style="font-size:.66rem;font-weight:700;color:{MUTED};margin-bottom:.25rem">'
-                            f'#{i} · {score:.3f} · {src}</div>'
-                            f'<div style="font-size:.81rem;color:{TEXT};line-height:1.6">'
-                            f'{chunk["text"][:400]}{"…" if len(chunk["text"])>400 else ""}'
-                            f'</div></div>',
-                            unsafe_allow_html=True,
-                        )
-
-    # Welcome state
-    if not messages:
+    if doc_count == 0:
+        # Empty state — no messages to show; upload expander appears below
         st.markdown(
-            f'<div style="text-align:center;padding:3.5rem 1rem;color:{MUTED}">'
-            f'<div style="font-size:2rem;margin-bottom:.6rem">💬</div>'
-            f'<div style="font-size:.95rem;font-weight:600;color:{TEXT};margin-bottom:.25rem">'
-            f'Knowledge base ready</div>'
-            f'<div style="font-size:.82rem">'
-            f'{doc_count:,} chunks available · Ask anything about your documents.</div>'
+            f'<div style="text-align:center;padding:4rem 1rem 2rem;color:{MUTED}">'
+            f'<div style="font-size:2.5rem;margin-bottom:.75rem">📂</div>'
+            f'<div style="font-size:1rem;font-weight:600;color:{TEXT};margin-bottom:.3rem">'
+            f'No documents yet</div>'
+            f'<div style="font-size:.85rem">Use the <b>📎 Attach files</b> panel below to upload PDFs, '
+            f'DOCX, EPUB, TXT or paste a URL — then start chatting.</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
-
-    # ── Chat input ────────────────────────────────────────────────────────────
-    if question := st.chat_input("Ask anything about your documents…"):
-        messages.append({"role": "user", "content": question})
-        with st.chat_message("user", avatar="🧑"):
-            st.markdown(question)
-
-        with st.chat_message("assistant", avatar="🤖"):
-            with st.spinner("Searching and generating…"):
-                try:
-                    p      = _pipeline(chroma_dir, cfg_json, col_name)
-                    result = p.query(question)
-                    chunks = result.get("chunks", [])
-                    answer = result["answer"]
-                    chunks = result.get("chunks", [])
-
-                    _not_found_phrases = (
-                        "i don't know based on the provided context",
-                        "i do not know based on the provided context",
-                        "not in the context",
-                        "not mentioned in the context",
-                        "does not provide",
-                        "not provided in the context",
-                    )
-                    is_not_found = any(ph in answer.lower() for ph in _not_found_phrases)
-
-                    ev  = RAGEvaluator()
-                    raw = ev.evaluate(question, answer, result.get("context", ""))
-                    scores = {
-                        **raw,
-                        "retrieval_ms":  result.get("retrieval_ms", "?"),
-                        "generation_ms": result.get("generation_ms", "?"),
-                    }
-
-                    # Record for nightly optimizer — builds a real question bank
-                    try:
-                        record_question(
-                            username=user,
-                            session_id=sid,
-                            collection_name=col_name,
-                            question=question,
-                            composite_score=raw.get("composite", 0.0),
-                        )
-                    except Exception:
-                        pass  # never block the UI for logging
-
-                    st.markdown(answer)
-
+    else:
+        for msg in messages:
+            with st.chat_message(msg["role"], avatar="🧑" if msg["role"] == "user" else "🤖"):
+                st.markdown(msg["content"])
+                if msg.get("scores") and msg["role"] == "assistant":
+                    s            = msg["scores"]
+                    is_not_found = any(p in msg["content"].lower() for p in _not_found_phrases)
                     if is_not_found:
-                        hints = _sample_topics(chroma_dir, col_name)
-                        hints_html = ""
-                        if hints:
-                            items = "".join(
-                                f'<li style="margin:.15rem 0;line-height:1.4">"{h}…"</li>'
-                                for h in hints
-                            )
-                            hints_html = (
-                                f'<div style="margin-top:.5rem;font-size:.75rem;color:#78350f">'
-                                f'<b>Your documents contain passages like:</b>'
-                                f'<ul style="margin:.3rem 0 0 1rem;padding:0">{items}</ul>'
-                                f'Try asking questions about those topics.</div>'
-                            )
                         st.markdown(
                             f'<div style="background:{AMBER_L};border:1px solid {AMBER};'
-                            f'border-radius:10px;padding:.6rem .9rem;margin-top:.4rem;'
-                            f'font-size:.8rem;color:#92400e">'
-                            f'<b>⚠️ Not found in your documents.</b> '
-                            f'The retrieved passages do not contain a direct answer. '
-                            f'Try rephrasing your question or ask about a topic that is explicitly '
-                            f'covered in the text. Also verify your PDF is text-based — '
-                            f'scanned/image PDFs return 0 chunks.'
-                            f'{hints_html}'
-                            f'</div>',
+                            f'border-radius:10px;padding:.5rem .85rem;font-size:.78rem;color:#92400e">'
+                            f'⚠️ Not found in your documents.</div>',
                             unsafe_allow_html=True,
                         )
                     else:
                         st.markdown(
-                            _score_badge("Faithfulness", scores.get("faithfulness", 0)) + " " +
-                            _score_badge("Relevance",    scores.get("relevance",    0)) + " " +
-                            _score_badge("Composite",    scores.get("composite",    0)) +
+                            _score_badge("Faithfulness", s.get("faithfulness", 0)) + " " +
+                            _score_badge("Relevance",    s.get("relevance",    0)) + " " +
+                            _score_badge("Composite",    s.get("composite",    0)) +
                             f' <span style="font-size:.67rem;color:{MUTED};margin-left:.35rem">'
-                            f'⏱ {scores.get("retrieval_ms","?")} ms · '
-                            f'{scores.get("generation_ms","?")} ms</span>',
+                            f'⏱ {s.get("retrieval_ms","?")} ms · {s.get("generation_ms","?")} ms</span>',
                             unsafe_allow_html=True,
                         )
-                    if chunks:
-                        with st.expander(f"📎 {len(chunks)} sources"):
-                            for i, chunk in enumerate(chunks, 1):
-                                src   = os.path.basename(chunk.get("metadata", {}).get("source", "")) or "—"
-                                score = chunk.get("score", 0)
-                                st.markdown(
-                                    f'<div style="margin-bottom:.6rem;padding:.75rem;background:{BG};'
-                                    f'border-radius:9px;border-left:3px solid {P}">'
-                                    f'<div style="font-size:.66rem;font-weight:700;color:{MUTED};margin-bottom:.25rem">'
-                                    f'#{i} · {score:.3f} · {src}</div>'
-                                    f'<div style="font-size:.81rem;color:{TEXT};line-height:1.6">'
-                                    f'{chunk["text"][:400]}{"…" if len(chunk["text"])>400 else ""}'
-                                    f'</div></div>',
-                                    unsafe_allow_html=True,
+                if msg.get("chunks"):
+                    with st.expander(f"📎 {len(msg['chunks'])} sources"):
+                        for i, chunk in enumerate(msg["chunks"], 1):
+                            src   = os.path.basename(chunk.get("metadata", {}).get("source", "")) or "—"
+                            score = chunk.get("score", 0)
+                            st.markdown(
+                                f'<div style="margin-bottom:.6rem;padding:.75rem;background:{BG};'
+                                f'border-radius:9px;border-left:3px solid {P}">'
+                                f'<div style="font-size:.66rem;font-weight:700;color:{MUTED};margin-bottom:.25rem">'
+                                f'#{i} · {score:.3f} · {src}</div>'
+                                f'<div style="font-size:.81rem;color:{TEXT};line-height:1.6">'
+                                f'{chunk["text"][:400]}{"…" if len(chunk["text"])>400 else ""}'
+                                f'</div></div>',
+                                unsafe_allow_html=True,
+                            )
+
+        # Welcome state (docs indexed but no messages yet)
+        if not messages:
+            st.markdown(
+                f'<div style="text-align:center;padding:3.5rem 1rem;color:{MUTED}">'
+                f'<div style="font-size:2rem;margin-bottom:.6rem">💬</div>'
+                f'<div style="font-size:.95rem;font-weight:600;color:{TEXT};margin-bottom:.25rem">'
+                f'Knowledge base ready</div>'
+                f'<div style="font-size:.82rem">'
+                f'{doc_count:,} chunks indexed · Ask anything about your documents.</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+    # ── Floating upload panel + FAB ───────────────────────────────────────────
+    # Upload panel renders just above the chat input when open
+    if show_up:
+        with st.container():
+            st.markdown(
+                f'<div style="background:{CARD};border:1px solid {BORDER};border-radius:12px;'
+                f'padding:1rem 1.2rem;margin:.5rem 0 .5rem">',
+                unsafe_allow_html=True,
+            )
+            _upload_widget(chroma_dir, cfg, col_name)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    # Hidden real button — triggered by the FAB via JS
+    if st.button("__FAB__", key="upload_fab_real"):
+        st.session_state["show_upload"] = not show_up
+        st.rerun()
+
+    # Inject FAB: hides the real button, renders a fixed floating one instead
+    _fab_icon  = "✕" if show_up else "📎"
+    _fab_label = "Close" if show_up else "Upload"
+    st.markdown(f"""
+<script>
+(function() {{
+  function mountFAB() {{
+    // hide the real trigger button
+    var btns = Array.from(document.querySelectorAll('button'));
+    var trigger = btns.find(function(b) {{ return b.innerText.trim() === '__FAB__'; }});
+    if (!trigger) {{ setTimeout(mountFAB, 150); return; }}
+    trigger.parentElement.style.display = 'none';
+
+    // remove stale FAB
+    var old = document.getElementById('__upload_fab__');
+    if (old) old.remove();
+
+    // create FAB
+    var fab = document.createElement('button');
+    fab.id = '__upload_fab__';
+    fab.innerHTML = '{_fab_icon} {_fab_label}';
+    fab.style.cssText = [
+      'position:fixed','bottom:80px','right:20px','z-index:9999',
+      'background:#3b82f6','color:#fff','border:none','border-radius:28px',
+      'padding:10px 20px','font-size:14px','font-weight:600','cursor:pointer',
+      'box-shadow:0 4px 20px rgba(59,130,246,0.45)',
+      'transition:transform .1s,box-shadow .1s',
+      'display:flex','align-items:center','gap:6px'
+    ].join(';');
+    fab.onmouseenter = function() {{ fab.style.transform='scale(1.05)'; fab.style.boxShadow='0 6px 24px rgba(59,130,246,0.55)'; }};
+    fab.onmouseleave = function() {{ fab.style.transform='scale(1)'; fab.style.boxShadow='0 4px 20px rgba(59,130,246,0.45)'; }};
+    fab.onclick = function() {{ trigger.click(); }};
+    document.body.appendChild(fab);
+  }}
+  mountFAB();
+  setTimeout(mountFAB, 400);
+}})();
+</script>
+""", unsafe_allow_html=True)
+
+    # ── Chat input ────────────────────────────────────────────────────────────
+    chat_placeholder = ("Upload documents first…" if doc_count == 0
+                        else "Ask anything about your documents…")
+    if question := st.chat_input(chat_placeholder):
+        if doc_count == 0:
+            st.warning("Click the 📎 Upload button at the bottom-right to upload documents first.")
+        else:
+            messages.append({"role": "user", "content": question})
+            with st.chat_message("user", avatar="🧑"):
+                st.markdown(question)
+
+            with st.chat_message("assistant", avatar="🤖"):
+                with st.spinner("Searching and generating…"):
+                    try:
+                        p      = _pipeline(chroma_dir, cfg_json, col_name)
+                        result = p.query(question)
+                        chunks = result.get("chunks", [])
+                        answer = result["answer"]
+
+                        _not_found_phrases = (
+                            "i don't know based on the provided context",
+                            "i do not know based on the provided context",
+                            "not in the context",
+                            "not mentioned in the context",
+                            "does not provide",
+                            "not provided in the context",
+                        )
+                        is_not_found = any(ph in answer.lower() for ph in _not_found_phrases)
+
+                        ev  = RAGEvaluator()
+                        raw = ev.evaluate(question, answer, result.get("context", ""))
+                        scores = {
+                            **raw,
+                            "retrieval_ms":  result.get("retrieval_ms", "?"),
+                            "generation_ms": result.get("generation_ms", "?"),
+                        }
+
+                        try:
+                            record_question(
+                                username=user,
+                                session_id=sid,
+                                collection_name=col_name,
+                                question=question,
+                                composite_score=raw.get("composite", 0.0),
+                            )
+                        except Exception:
+                            pass
+
+                        st.markdown(answer)
+
+                        if is_not_found:
+                            hints = _sample_topics(chroma_dir, col_name)
+                            hints_html = ""
+                            if hints:
+                                items = "".join(
+                                    f'<li style="margin:.15rem 0;line-height:1.4">"{h}…"</li>'
+                                    for h in hints
                                 )
+                                hints_html = (
+                                    f'<div style="margin-top:.5rem;font-size:.75rem;color:#78350f">'
+                                    f'<b>Your documents contain passages like:</b>'
+                                    f'<ul style="margin:.3rem 0 0 1rem;padding:0">{items}</ul>'
+                                    f'Try asking questions about those topics.</div>'
+                                )
+                            st.markdown(
+                                f'<div style="background:{AMBER_L};border:1px solid {AMBER};'
+                                f'border-radius:10px;padding:.6rem .9rem;margin-top:.4rem;'
+                                f'font-size:.8rem;color:#92400e">'
+                                f'<b>⚠️ Not found in your documents.</b> '
+                                f'The retrieved passages do not contain a direct answer. '
+                                f'Try rephrasing or check that your PDF is text-based (not scanned).'
+                                f'{hints_html}'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            st.markdown(
+                                _score_badge("Faithfulness", scores.get("faithfulness", 0)) + " " +
+                                _score_badge("Relevance",    scores.get("relevance",    0)) + " " +
+                                _score_badge("Composite",    scores.get("composite",    0)) +
+                                f' <span style="font-size:.67rem;color:{MUTED};margin-left:.35rem">'
+                                f'⏱ {scores.get("retrieval_ms","?")} ms · '
+                                f'{scores.get("generation_ms","?")} ms</span>',
+                                unsafe_allow_html=True,
+                            )
+                        if chunks:
+                            with st.expander(f"📎 {len(chunks)} sources"):
+                                for i, chunk in enumerate(chunks, 1):
+                                    src   = os.path.basename(chunk.get("metadata", {}).get("source", "")) or "—"
+                                    score = chunk.get("score", 0)
+                                    st.markdown(
+                                        f'<div style="margin-bottom:.6rem;padding:.75rem;background:{BG};'
+                                        f'border-radius:9px;border-left:3px solid {P}">'
+                                        f'<div style="font-size:.66rem;font-weight:700;color:{MUTED};margin-bottom:.25rem">'
+                                        f'#{i} · {score:.3f} · {src}</div>'
+                                        f'<div style="font-size:.81rem;color:{TEXT};line-height:1.6">'
+                                        f'{chunk["text"][:400]}{"…" if len(chunk["text"])>400 else ""}'
+                                        f'</div></div>',
+                                        unsafe_allow_html=True,
+                                    )
 
-                    messages.append({
-                        "role":    "assistant",
-                        "content": answer,
-                        "scores":  scores,
-                        "chunks":  chunks,
-                    })
+                        messages.append({
+                            "role":    "assistant",
+                            "content": answer,
+                            "scores":  scores,
+                            "chunks":  chunks,
+                        })
 
-                    # Auto-title from first question
-                    new_title = None
-                    if len(messages) == 2:  # first exchange
-                        new_title = question[:55] + ("…" if len(question) > 55 else "")
+                        new_title = None
+                        if len(messages) == 2:
+                            new_title = question[:55] + ("…" if len(question) > 55 else "")
 
-                    # Persist to disk
-                    st.session_state["chat_messages"] = messages
-                    save_messages(user, sid, messages, title=new_title)
+                        st.session_state["chat_messages"] = messages
+                        save_messages(user, sid, messages, title=new_title)
 
-                except Exception as exc:
-                    msg = f"Error: {exc}"
-                    st.error(msg)
-                    messages.append({"role": "assistant", "content": msg})
-                    st.session_state["chat_messages"] = messages
-                    save_messages(user, sid, messages)
+                    except Exception as exc:
+                        err_str = str(exc)
+                        if "daily token limit" in err_str.lower() or "tokens per day" in err_str.lower():
+                            st.warning(err_str)
+                        else:
+                            st.error(f"Error: {err_str}")
+                        messages.append({"role": "assistant", "content": f"Error: {err_str}"})
+                        st.session_state["chat_messages"] = messages
+                        save_messages(user, sid, messages)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -999,7 +1073,7 @@ def _configuration() -> None:
     t1, t2 = st.tabs(["⚙️ RAG Config", "👤 Account"])
 
     with t1:
-        cfg   = _load_optuna_cfg()
+        cfg   = _load_optuna_cfg(username=st.session_state.get("auth_user"))
         items = list(cfg.to_dict().items())
         cols  = st.columns(4)
         for i, (k, v) in enumerate(items):
@@ -1057,11 +1131,23 @@ def _configuration() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 #  ENTRY
 # ─────────────────────────────────────────────────────────────────────────────
+def _apply_hf_token() -> None:
+    """Pick the first available HF_TOKEN1/2/3, fall back to HF_TOKEN."""
+    for i in range(1, 10):
+        t = os.environ.get(f"HF_TOKEN{i}", "").strip()
+        if t:
+            os.environ["HF_TOKEN"] = t
+            os.environ["HUGGINGFACE_HUB_TOKEN"] = t
+            return
+    # plain HF_TOKEN already set — nothing to do
+
+
 def run_dashboard(db_path: str = "./rag_results.db", chroma_dir: str = "./chroma_db") -> None:
     st.set_page_config(page_title="AutoRAG", page_icon="🤖",
                        layout="wide", initial_sidebar_state="expanded")
     from dotenv import load_dotenv
     load_dotenv()
+    _apply_hf_token()
 
     st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
 
