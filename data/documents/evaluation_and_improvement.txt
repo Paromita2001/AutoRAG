@@ -1,0 +1,175 @@
+DOCUMENT: Evaluation, A/B Testing, and Self-Improvement
+SOURCE: AutoRAG Knowledge Base
+TOPIC: Measuring and Improving RAG Quality
+
+================================================================================
+SECTION 1: LLM-as-Judge Evaluation
+================================================================================
+
+LLM-as-Judge uses a second language model to evaluate the quality of a RAG
+system's answers. The judge receives the original question, the retrieved
+context chunks, and the generated answer, then scores them on multiple dimensions.
+
+Faithfulness (0 to 1):
+Measures whether every claim in the answer is directly supported by the
+retrieved context. A faithfulness score of 1.0 means no hallucination — every
+statement can be traced back to a specific passage in the context.
+
+Score 0.9-1.0: All claims grounded in context
+Score 0.7-0.9: Minor unsupported embellishments
+Score 0.5-0.7: Some claims not in context
+Score < 0.5: Significant hallucination
+
+Relevance (0 to 1):
+Measures whether the answer actually addresses what the user asked. A relevant
+answer directly responds to the question even if the context was incomplete.
+
+Score 0.9-1.0: Directly and completely answers the question
+Score 0.7-0.9: Addresses the question with minor gaps
+Score 0.5-0.7: Partially answers the question
+Score < 0.5: Misses the point of the question
+
+Composite Score:
+composite = 0.6 * faithfulness + 0.4 * relevance
+
+Faithfulness is weighted higher (0.6 vs 0.4) because hallucination is the
+primary risk of RAG systems. An answer that is irrelevant but faithful (admits
+it doesn't know) is less harmful than an answer that is plausible-sounding
+but factually wrong.
+
+================================================================================
+SECTION 2: Judge Caching
+================================================================================
+
+Evaluating with an LLM judge consumes API calls. To reduce cost and latency,
+judge results can be cached by a hash of the (context, question) pair.
+
+cache_key = hash(str(context_chunks) + question)
+
+If the same question is asked with the same retrieved context, the cached
+score is returned instantly without calling the judge API.
+
+This is safe because: the judge score depends only on the content of context
+and question, not on when the evaluation happens. The same input always produces
+the same score (approximately, with temperature=0).
+
+Cache hit rates in practice:
+- Optuna trials exploring same chunk_size + embedding: up to 60% hit rate
+- Nightly run after sufficient history: 30-40% hit rate
+- Saves approximately 30-40% of total judge API calls
+
+================================================================================
+SECTION 3: The Self-Improving Loop
+================================================================================
+
+The self-improving loop works as follows:
+
+Day 1 (queries arrive):
+1. User queries are processed by the current best pipeline configuration
+2. Every query-context-answer triplet is evaluated by the LLM judge
+3. Results stored in SQLite: (config_id, query, context, answer, faithfulness, relevance)
+
+Night 1 (2AM optimization):
+4. APScheduler triggers nightly_optimization()
+5. Optuna loads all (config, score) pairs from the database
+6. TPE sampler suggests 50 new configurations to try
+7. Each configuration is evaluated on the 20-question test set
+8. Best configuration is identified
+9. Deployment gate: reject if score < 0.7
+
+Day 2 (A/B test):
+10. 10% of traffic routed to new configuration
+11. 90% continues on current best configuration
+12. Both collect faithfulness scores for 24 hours
+
+Day 3 (decision):
+13. Welch's t-test: p < 0.05?
+14. Cohen's d > 0.2?
+15. Treatment mean > control mean?
+16. If all three: DEPLOY new config, save as best_config_vN.json
+17. If any fails: REJECT, keep current config
+
+The loop continues nightly, continuously discovering better configurations.
+
+================================================================================
+SECTION 4: A/B Testing with Statistical Significance
+================================================================================
+
+A/B testing prevents deploying configurations that appear better due to random
+variation. Two statistical measures are required:
+
+Welch's t-test:
+Tests whether two groups have statistically different means. Welch's variant
+(unequal variance) is used because control and treatment groups may have
+different score distributions.
+
+p-value < 0.05 means there is less than 5% probability that the observed
+difference occurred by chance. This is the standard significance threshold.
+
+Cohen's d (effect size):
+Measures how large the difference is in practical terms, independent of sample
+size. Cohen's d = (mean_treatment - mean_control) / pooled_std_dev
+
+d = 0.2: small effect (minimum practical significance)
+d = 0.5: medium effect
+d = 0.8: large effect
+
+Both conditions must be met: statistical significance (p < 0.05) AND practical
+significance (d > 0.2). This prevents deploying configurations that are
+technically significant but practically irrelevant (tiny improvement).
+
+Minimum sample: 20 queries per group before running the test. With fewer
+samples, the test lacks statistical power.
+
+================================================================================
+SECTION 5: Data Drift Detection
+================================================================================
+
+Data drift occurs when the distribution of user queries changes over time,
+making the current optimal configuration suboptimal.
+
+Detection method: KL divergence between query embedding distributions.
+
+For each week's queries, compute the centroid of their embeddings.
+Compare centroid distribution to the historical baseline using KL divergence.
+
+KL_divergence(P || Q) measures how much distribution P differs from Q.
+- KL < 0.3: normal variation
+- KL 0.3-0.5: mild drift, monitor closely
+- KL > 0.5: significant drift, trigger re-indexing and re-optimization
+
+Practical causes of drift:
+- New product features generating new query types
+- Seasonal changes in what users ask about
+- New documents added to the knowledge base
+- Events causing unusual query patterns
+
+Response to drift:
+1. Alert the monitoring dashboard
+2. Add new document types to the knowledge base
+3. Add new test questions covering the drifted query types
+4. Trigger Optuna re-optimization with the updated test set
+
+================================================================================
+SECTION 6: Production Monitoring
+================================================================================
+
+Key metrics to monitor in a production self-improving RAG system:
+
+Online faithfulness: LLM-as-Judge on 10% of live traffic. Alert if 24-hour
+rolling average drops more than 0.1 from baseline.
+
+Retrieval quality proxy: Average similarity score of the top-1 retrieved chunk.
+A drop indicates query drift or stale index. No judge call needed.
+
+Answer length trend: Sudden changes in average answer length indicate config
+changes or prompt issues.
+
+Out-of-scope rate: Percentage of queries where the system says it doesn't know.
+An increase means coverage has decreased.
+
+Latency: p50, p95, p99 response times. Alert on p95 > 5 seconds.
+
+Optuna improvement rate: Is each nightly run still finding better configs?
+If scores plateau for 7 nights, the search space may be exhausted for the
+current document set — trigger document refresh.

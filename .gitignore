@@ -1,0 +1,42 @@
+# ── Secrets (NEVER push these) ────────────────────────────────────────────────
+.env
+users.json
+
+# ── User data (personal / private) ───────────────────────────────────────────
+chat_sessions/
+data/user_questions.json
+
+# ── Vector database (huge, rebuilt by uploading docs) ────────────────────────
+chroma_db/
+
+# ── SQLite database + WAL files ───────────────────────────────────────────────
+*.db
+*.db-shm
+*.db-wal
+
+# ── Runtime / logs ────────────────────────────────────────────────────────────
+logs.txt
+*.log
+
+# ── Python cache ──────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# ── Virtual environment (recreate with: pip install -r requirements.txt) ──────
+.venv/
+venv/
+env/
+
+# ── OS junk ───────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Editor ────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+progress.txt

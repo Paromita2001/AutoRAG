@@ -1,0 +1,13 @@
+# First time setup
+cd "D:\SELFLEARNING\projects\claude\AutoRAG1"
+copy .env.example .env          # then add your GROQ_API_KEY
+pip install -r requirements.txt
+
+# Run tests
+python -m pytest
+
+# Index documents + start everything
+python main.py --documents ./your_docs
+
+# Dashboard only
+streamlit run self_improving_rag/dashboard_entry.py

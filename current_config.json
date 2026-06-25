@@ -1,0 +1,10 @@
+{
+  "embedding_model": "BAAI/bge-large-en-v1.5",
+  "chunk_size": 832,
+  "overlap": 160,
+  "top_k": 4,
+  "temperature": 0.07799726016810132,
+  "groq_model": "llama-3.3-70b-versatile",
+  "rerank": false,
+  "similarity_threshold": 0.13485016730091967
+}

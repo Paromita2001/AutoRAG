@@ -1,0 +1,22 @@
+[
+  {"question": "What is retrieval-augmented generation?", "out_of_scope": false},
+  {"question": "How does embedding-based semantic search work?", "out_of_scope": false},
+  {"question": "What is the difference between BM25 and dense retrieval?", "out_of_scope": false},
+  {"question": "How does chunking strategy affect RAG quality?", "out_of_scope": false},
+  {"question": "What is a vector database and how does it store embeddings?", "out_of_scope": false},
+  {"question": "What is the role of the LLM in a RAG pipeline?", "out_of_scope": false},
+  {"question": "How do you evaluate faithfulness in RAG?", "out_of_scope": false},
+  {"question": "What is the difference between top-k retrieval and similarity threshold filtering?", "out_of_scope": false},
+  {"question": "What is hyperparameter optimization and why is it important for RAG?", "out_of_scope": false},
+  {"question": "How does Optuna use Bayesian optimization to tune hyperparameters?", "out_of_scope": false},
+  {"question": "What is Cohen's d and how is it used in A/B testing?", "out_of_scope": false},
+  {"question": "What is KL divergence and how does it detect data drift?", "out_of_scope": false},
+  {"question": "How does sentence-transformers encode text into embeddings?", "out_of_scope": false},
+  {"question": "What is the composite score formula used in RAG evaluation?", "out_of_scope": false},
+  {"question": "What is ChromaDB and what is a PersistentClient?", "out_of_scope": false},
+  {"question": "How does Welch's t-test differ from a standard t-test?", "out_of_scope": false},
+  {"question": "What is fANOVA and how is it used for hyperparameter importance?", "out_of_scope": false},
+  {"question": "How does APScheduler execute a cron job at midnight?", "out_of_scope": false},
+  {"question": "What is the instructor library and how does it enforce structured outputs?", "out_of_scope": false},
+  {"question": "What is the capital of France?", "out_of_scope": true}
+]

@@ -1,0 +1,130 @@
+DOCUMENT: Optuna and Hyperparameter Optimization
+SOURCE: AutoRAG Knowledge Base
+TOPIC: Bayesian Optimization with Optuna TPE
+
+================================================================================
+SECTION 1: Why Optuna Over Grid or Random Search
+================================================================================
+
+Grid search evaluates every combination of hyperparameters. With 8 parameters
+and 3-5 values each, this results in 3^8 = 6,561 configurations. At 5 minutes
+per trial, this takes 22+ days to complete. Completely impractical.
+
+Random search picks configurations at random. It has no memory — each trial
+is independent. After 500 trials, it knows nothing more about which regions
+are promising than after trial 1.
+
+Optuna uses Tree-structured Parzen Estimator (TPE), a Bayesian optimization
+algorithm. TPE builds a probabilistic model of which hyperparameter regions
+produce high scores, based on all previous trials. After 20-30 trials, it
+knows to sample more frequently from promising regions.
+
+Optuna finds near-optimal configurations in 50-100 trials versus 500+ for
+random search. It also provides pruning, importance analysis, and visualization
+out of the box.
+
+================================================================================
+SECTION 2: How TPE Works
+================================================================================
+
+TPE models the distribution of hyperparameter values that led to good scores
+and the distribution that led to bad scores. It then suggests values that are
+likely to come from the "good" distribution.
+
+Formally, TPE maximizes the ratio l(x)/g(x) where:
+- l(x) is the probability of observing hyperparameter x given it scored in
+  the top quantile of trials
+- g(x) is the probability of observing x given it scored in the bottom quantile
+
+After each trial, both distributions are updated. The sampler learns to avoid
+regions that consistently scored poorly.
+
+Key insight: TPE treats each hyperparameter dimension independently. It builds
+separate models for chunk_size, embedding_model, top_k, etc. This makes it
+efficient even in high-dimensional spaces.
+
+================================================================================
+SECTION 3: Optuna Study and Trials
+================================================================================
+
+A Study is an optimization session — the overall problem definition. Each Study
+has a name, a direction (maximize or minimize), and a storage backend.
+
+A Trial is a single evaluation of one configuration. The trial samples values
+for each hyperparameter, builds the pipeline, runs evaluation, and returns a
+score.
+
+Creating a persistent study:
+study = optuna.create_study(
+    study_name='rag_optimization',
+    direction='maximize',
+    storage='sqlite:///rag_trials.db',
+    load_if_exists=True  # resumes from previous night if file exists
+)
+
+The load_if_exists=True flag is critical — it means the optimizer accumulates
+knowledge across multiple nightly runs instead of starting fresh each time.
+
+================================================================================
+SECTION 4: MedianPruner — Early Stopping for Bad Trials
+================================================================================
+
+MedianPruner stops a trial early if its intermediate score falls below the
+median of completed trials at the same evaluation step.
+
+This works because bad configurations fail fast. If a trial is scoring 0.4
+after 5 questions while the median is 0.75, it is very unlikely to improve
+enough to be competitive.
+
+Implementation requires two hooks in the objective function:
+
+trial.report(partial_score, step=query_idx)
+# Reports the current intermediate score after evaluating query_idx questions
+
+if trial.should_prune():
+    raise optuna.exceptions.TrialPruned()
+# Checks if this trial should be stopped based on the pruner's decision
+
+Result: bad trials are stopped after 3-8 questions instead of all 20.
+This saves 30-50% of total computation while not affecting the quality of
+the final best configuration.
+
+================================================================================
+SECTION 5: Multi-Objective Optimization
+================================================================================
+
+Standard Optuna optimizes a single composite score (0.6*faithfulness +
+0.4*relevance). This assumes a fixed trade-off between dimensions.
+
+Multi-objective Optuna explores the full trade-off:
+
+study = optuna.create_study(
+    directions=['maximize', 'maximize']  # faithfulness and relevance separately
+)
+
+The result is a Pareto front — a set of configurations where you cannot improve
+faithfulness without degrading relevance and vice versa. The caller then picks
+a point on the Pareto front based on application priorities.
+
+For medical RAG: pick high-faithfulness point (safety critical)
+For customer support RAG: pick balanced point
+For creative writing assistant: pick high-relevance point
+
+================================================================================
+SECTION 6: fANOVA Hyperparameter Importance
+================================================================================
+
+After running trials, Optuna can compute fANOVA (functional ANOVA) importance
+scores that tell you how much each hyperparameter affects the objective.
+
+Typical importance scores for RAG:
+- embedding_model: 42% — most important single factor
+- chunk_size: 28% — second most important, log-scale effect
+- query_transformation: 18% — HyDE often gives major boost
+- top_k: 8% — moderate impact
+- use_mmr / mmr_lambda: 5% combined — situational
+- chunk_overlap: 4% — minor refinement
+- temperature: 4% — least important for faithful RAG
+
+Practical implication: focus re-indexing budget on embedding_model and
+chunk_size. Don't waste compute sweeping temperature if importance is only 4%.

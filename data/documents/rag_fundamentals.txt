@@ -1,0 +1,146 @@
+DOCUMENT: RAG Fundamentals
+SOURCE: AutoRAG Knowledge Base
+TOPIC: Retrieval-Augmented Generation Basics
+
+================================================================================
+SECTION 1: What is RAG?
+================================================================================
+
+RAG stands for Retrieval-Augmented Generation. It is a technique that combines
+two components: a retrieval system that fetches relevant documents from a
+knowledge base, and a generative language model that uses those documents to
+produce an answer.
+
+The core idea behind RAG is that instead of relying solely on the knowledge
+baked into an LLM's parameters during training, the model is given access to
+external, up-to-date documents at inference time. This makes the model more
+accurate, more factual, and easier to update without retraining.
+
+RAG is composed of three stages:
+1. Indexing — documents are split into chunks and embedded into a vector store.
+2. Retrieval — a user query is embedded and matched to the most similar chunks.
+3. Generation — the retrieved chunks are passed as context to the LLM, which
+   generates a grounded answer.
+
+================================================================================
+SECTION 2: Chunking and Chunk Size
+================================================================================
+
+Chunking is the process of splitting long documents into smaller pieces before
+embedding them. Each chunk is stored as a separate entry in the vector database.
+
+Chunk size determines how many tokens or characters go into each chunk. It is
+one of the most important hyperparameters in a RAG pipeline.
+
+- Small chunk size (128-256 tokens): Each chunk contains a narrow piece of
+  information. Retrieval is precise but may miss surrounding context needed
+  to answer the question completely.
+
+- Medium chunk size (384-512 tokens): Balances specificity and context.
+  Works well for most general-purpose document types.
+
+- Large chunk size (768-1024 tokens): Each chunk contains more context,
+  which helps for questions that require broader understanding. However,
+  larger chunks may include irrelevant information that confuses the model.
+
+Chunk overlap is the number of tokens shared between consecutive chunks. An
+overlap of 50-100 tokens ensures that sentences or ideas that span chunk
+boundaries are not split and lost.
+
+================================================================================
+SECTION 3: Embedding Models
+================================================================================
+
+An embedding model converts text (chunks or queries) into dense vectors of
+numbers. Vectors that are close together in the vector space represent text
+with similar meaning.
+
+all-MiniLM-L6-v2:
+- 22 million parameters
+- Embedding dimension: 384
+- Very fast inference on CPU (under 0.5 seconds per batch)
+- Good general-purpose performance
+- Best for: rapid prototyping, CPU-constrained environments
+
+BAAI/bge-large-en-v1.5:
+- 335 million parameters
+- Embedding dimension: 1024
+- Slower on CPU (3-5 seconds per batch) but significantly more accurate
+- Excels at domain-specific and technical vocabulary
+- Best for: production accuracy-critical systems
+
+The choice of embedding model is the single most impactful hyperparameter
+in RAG performance according to fANOVA importance analysis, accounting for
+approximately 42% of the variance in evaluation scores.
+
+================================================================================
+SECTION 4: Retrieval Strategies
+================================================================================
+
+Dense retrieval uses cosine similarity between query embedding and chunk
+embeddings to find the most semantically similar chunks. It works well for
+conceptual questions but may miss exact keyword matches.
+
+Hybrid retrieval combines dense semantic search with BM25 keyword search.
+BM25 is particularly good at finding exact terms, acronyms, and named entities.
+For the question "What does BERT stand for?", hybrid retrieval finds the exact
+expansion while dense retrieval may return semantically related content.
+
+Maximal Marginal Relevance (MMR) retrieves chunks that are both relevant to
+the query and diverse from each other. This avoids retrieving multiple very
+similar chunks, wasting the Top-K budget on redundant information.
+
+The mmr_lambda parameter (0.5 to 1.0) controls the trade-off:
+- lambda = 1.0: pure relevance (same as standard dense retrieval)
+- lambda = 0.5: maximum diversity (may sacrifice some relevance)
+- lambda = 0.7: recommended default, good balance
+
+Top-K (typically 3 to 10) determines how many chunks to retrieve per query:
+- Top-K = 3: fast, sufficient for narrow factual questions
+- Top-K = 5-7: recommended for general questions
+- Top-K = 8-10: needed for broad questions requiring synthesis of multiple facts
+
+================================================================================
+SECTION 5: Query Transformation
+================================================================================
+
+Query transformation modifies the user's question before embedding and retrieval,
+to improve the match between the query and the indexed documents.
+
+none: The raw user question is embedded directly. Simplest approach.
+
+multi_query: The question is rephrased into 2-3 alternative versions. All
+versions are retrieved independently and results are merged. Reduces sensitivity
+to exact phrasing.
+
+HyDE (Hypothetical Document Embedding): The LLM first generates a hypothetical
+answer to the question. That hypothetical answer is then embedded for retrieval
+instead of the question itself. This works because the hypothetical answer is
+written in the same vocabulary and style as the actual documents, resulting in
+much better embedding similarity.
+
+Example:
+- Raw query: "What causes high temperature in neural networks?"
+- HyDE answer: "High temperature in neural network generation is caused by
+  increasing the sampling randomness. When temperature is set above 1.0, the
+  model samples from a flatter probability distribution..."
+- The HyDE answer embeds much closer to the actual document section about
+  temperature than the raw question does.
+
+================================================================================
+SECTION 6: Generation and Temperature
+================================================================================
+
+After retrieval, the retrieved chunks are combined with the user question in a
+prompt and sent to the LLM for generation.
+
+Temperature controls the randomness of the LLM's output:
+- temperature = 0.0: fully deterministic, always picks the highest-probability
+  token. Best for factual RAG where faithfulness is critical.
+- temperature = 0.1-0.2: slight variation, still mostly grounded.
+- temperature > 0.5: increasingly creative but risks hallucination.
+
+For RAG systems, temperature is typically kept low (0.0-0.2) because the goal
+is to faithfully report information from the retrieved context, not to be
+creative. Temperature is the least important hyperparameter in fANOVA analysis,
+accounting for only 4% of score variance.
