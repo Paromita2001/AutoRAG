@@ -12,10 +12,6 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 
-class _OpenRouterFallback(Exception):
-    """Sentinel: Groq TPD exhausted, caller should use OpenRouter scoring."""
-
-
 class _SchemaFallback(Exception):
     """Sentinel: model returned score embedded in text — extracted score carried here."""
     def __init__(self, score: float):
@@ -128,14 +124,10 @@ class RAGEvaluator:
                             len(self._tpd_hits), len(pool._keys),
                         )
                         if len(self._tpd_hits) >= len(pool._keys):
-                            # All orgs exhausted — fall back to OpenRouter
-                            logger.warning("[evaluator] All keys TPD exhausted — trying OpenRouter")
-                            from .openrouter_client import available as _or_avail
-                            if _or_avail():
-                                raise _OpenRouterFallback()
+                            logger.warning("[evaluator] All keys TPD exhausted — try again tomorrow")
                             raise RuntimeError(
-                                "⏳ Groq daily token limit reached on all keys. "
-                                "Add OPENROUTER_API_KEY to .env for automatic fallback."
+                                "⏳ All Groq keys have reached their daily token limit. "
+                                "Try again tomorrow when the limits reset."
                             ) from exc
                         # More keys to try — rotate immediately, no sleep needed
                         pool._rotate()
@@ -186,9 +178,6 @@ class RAGEvaluator:
             return float(result.score)
         except _SchemaFallback as sf:
             return sf.score
-        except _OpenRouterFallback:
-            from .openrouter_client import evaluate_score
-            return evaluate_score(prompt)
         except Exception as exc:
             logger.error("Faithfulness evaluation failed: %s", exc)
             return 0.5
@@ -211,9 +200,6 @@ class RAGEvaluator:
             return float(result.score)
         except _SchemaFallback as sf:
             return sf.score
-        except _OpenRouterFallback:
-            from .openrouter_client import evaluate_score
-            return evaluate_score(prompt)
         except Exception as exc:
             logger.error("Relevance evaluation failed: %s", exc)
             return 0.5

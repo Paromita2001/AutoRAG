@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["python311", "gcc", "libstdcxx5"]
+
+[phases.install]
+cmds = ["pip install --no-cache-dir -r requirements.txt"]
+
+[start]
+cmd = "python -m streamlit run self_improving_rag/dashboard_entry.py --server.address 0.0.0.0 --server.port $PORT --server.headless true"

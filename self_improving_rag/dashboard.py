@@ -740,8 +740,14 @@ def _chat_page(chroma_dir: str) -> None:
                         )
                         is_not_found = any(ph in answer.lower() for ph in _not_found_phrases)
 
-                        ev  = RAGEvaluator()
-                        raw = ev.evaluate(question, answer, result.get("context", ""))
+                        st.markdown(answer)
+
+                        try:
+                            ev  = RAGEvaluator()
+                            raw = ev.evaluate(question, answer, result.get("context", ""))
+                        except Exception as eval_exc:
+                            logger.warning("Evaluation failed (non-fatal): %s", eval_exc)
+                            raw = {"faithfulness": 0.5, "relevance": 0.5, "composite": 0.5}
                         scores = {
                             **raw,
                             "retrieval_ms":  result.get("retrieval_ms", "?"),
@@ -758,8 +764,6 @@ def _chat_page(chroma_dir: str) -> None:
                             )
                         except Exception:
                             pass
-
-                        st.markdown(answer)
 
                         if is_not_found:
                             hints = _sample_topics(chroma_dir, col_name)
@@ -1146,7 +1150,7 @@ def run_dashboard(db_path: str = "./rag_results.db", chroma_dir: str = "./chroma
     st.set_page_config(page_title="AutoRAG", page_icon="🤖",
                        layout="wide", initial_sidebar_state="expanded")
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(override=True)
     _apply_hf_token()
 
     st.markdown(GLOBAL_CSS, unsafe_allow_html=True)

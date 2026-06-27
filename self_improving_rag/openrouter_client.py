@@ -119,8 +119,15 @@ def chat_completions_create(models: List[str], **kwargs) -> Any:
             return resp
         except Exception as exc:
             msg = str(exc)
+            if "401" in msg or "invalid_api_key" in msg.lower() or "unauthorized" in msg.lower():
+                logger.error(
+                    "[openrouter] 401 Invalid API key — update OPENROUTER_API_KEY in .env and restart"
+                )
+                raise RuntimeError(
+                    "❌ OpenRouter API key is invalid. "
+                    "Go to openrouter.ai → Keys → create new key → update .env → restart app."
+                ) from exc
             if "404" in msg or "No endpoints found" in msg.lower():
-                # Model removed or unavailable on OpenRouter — skip silently
                 logger.warning("[openrouter] %s not available (404) — skipping", model)
                 last_exc = exc
                 continue

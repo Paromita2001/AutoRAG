@@ -43,6 +43,7 @@ class GroqKeyPool:
         self._lock = Lock()
         self._retry_delay = retry_delay
         self._clients = [Groq(api_key=k) for k in self._keys]
+        self._tpd_exhausted: set = set()  # persists across calls — keys that hit daily limit
         logger.info("GroqKeyPool: loaded %d key(s)", len(self._keys))
 
     @property
@@ -67,8 +68,16 @@ class GroqKeyPool:
         Only falls back to OpenRouter once ALL keys have hit TPD.
         """
         last_exc = None
-        tpd_hits: set = set()   # track which key indices have hit TPD this call
+        # Skip keys already known to be TPD-exhausted this session
+        if len(self._tpd_exhausted) >= len(self._keys):
+            raise RuntimeError(
+                "⏳ All Groq keys have reached their daily token limit (100k/day each). "
+                "Try again tomorrow when the limits reset."
+            )
         for attempt in range(retries):
+            # If current key is already known TPD-exhausted, rotate first
+            while self._index in self._tpd_exhausted and len(self._tpd_exhausted) < len(self._keys):
+                self._rotate()
             client = self.current
             try:
                 return client.chat.completions.create(**kwargs)
@@ -77,29 +86,17 @@ class GroqKeyPool:
                 is_rate_limit = "429" in msg or "rate_limit" in msg.lower() or "rate limit" in msg.lower()
                 if is_rate_limit:
                     if "tokens per day" in msg.lower() or "tpd" in msg.lower():
-                        tpd_hits.add(self._index)
+                        self._tpd_exhausted.add(self._index)
                         logger.warning(
                             "[groq] TPD hit on key %d/%d (%d/%d keys exhausted)",
                             self._index + 1, len(self._keys),
-                            len(tpd_hits), len(self._keys),
+                            len(self._tpd_exhausted), len(self._keys),
                         )
-                        if len(tpd_hits) >= len(self._keys):
-                            # All keys are TPD-exhausted — try OpenRouter
-                            logger.warning("[groq] All keys TPD exhausted — trying OpenRouter fallback")
-                            try:
-                                from .openrouter_client import (
-                                    chat_completions_create as _or_create,
-                                    GENERATION_MODELS,
-                                    available as _or_available,
-                                )
-                                if _or_available():
-                                    return _or_create(GENERATION_MODELS, **kwargs)
-                            except Exception as fb_exc:
-                                logger.warning("[openrouter] fallback failed: %s", fb_exc)
+                        if len(self._tpd_exhausted) >= len(self._keys):
+                            logger.warning("[groq] All keys TPD exhausted — try again tomorrow")
                             raise RuntimeError(
-                                "⏳ Groq daily token limit reached on all keys. "
-                                "Add OPENROUTER_API_KEY to .env for automatic fallback, "
-                                "or try again tomorrow."
+                                "⏳ All Groq keys have reached their daily token limit (100k/day each). "
+                                "Try again tomorrow when the limits reset."
                             ) from exc
                         # Still have untried keys — rotate and retry immediately
                         self._rotate()
@@ -112,6 +109,13 @@ class GroqKeyPool:
                     self._rotate()
                     wait = self._retry_delay * (2 ** min(attempt, 4))
                     time.sleep(wait)
+                    last_exc = exc
+                elif "401" in msg or "invalid_api_key" in msg.lower():
+                    logger.error(
+                        "[groq] Key %d/%d is invalid (401) — skipping it",
+                        self._index + 1, len(self._keys),
+                    )
+                    self._rotate()
                     last_exc = exc
                 else:
                     raise
@@ -135,7 +139,7 @@ def get_pool() -> GroqKeyPool:
             if not os.environ.get("GROQ_API_KEY1") and not os.environ.get("GROQ_API_KEY"):
                 try:
                     from dotenv import load_dotenv
-                    load_dotenv()
+                    load_dotenv(override=True)
                 except ImportError:
                     pass
             _DEFAULT_POOL = GroqKeyPool()

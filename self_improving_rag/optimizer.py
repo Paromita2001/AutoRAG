@@ -80,13 +80,15 @@ class RAGOptimizer:
         api_failures = 0
         for i, question in enumerate(self.questions):
             try:
-                result = pipeline.query(question)
-                eval_scores = self._evaluator.evaluate(
+                # Short answers (200 tokens) save ~70% generation tokens vs normal (768)
+                result = pipeline.query(question, max_tokens=200)
+                # Relevance-only eval: saves 1 Groq call per question vs full evaluate()
+                relevance = self._evaluator.evaluate_relevance(
                     question=result["question"],
                     answer=result["answer"],
-                    context=result["context"],
                 )
-                composite = eval_scores["composite"]
+                eval_scores = {"faithfulness": 0.5, "relevance": relevance, "composite": relevance}
+                composite = relevance
                 scores.append(composite)
                 self.storage.save_query_result(
                     question=result["question"],
@@ -106,15 +108,13 @@ class RAGOptimizer:
             except Exception as exc:
                 msg = str(exc)
                 logger.warning("Trial %d / question %d failed: %s", trial.number, i, exc)
-                # Both Groq and OpenRouter exhausted — stop the entire study
-                if "daily token limit" in msg or "All OpenRouter" in msg:
-                    api_failures += 1
-                    if api_failures >= 2:
-                        raise RuntimeError(
-                            "⏳ All API providers exhausted (Groq TPD + OpenRouter rate-limited). "
-                            "Optimizer paused — try again in a few hours."
-                        )
-                scores.append(0.5)  # neutral score, don't punish config for API failure
+                if "daily token limit" in msg or "tpd" in msg.lower():
+                    # All Groq keys exhausted — stop the study immediately, no point retrying
+                    raise RuntimeError(
+                        "⏳ All Groq keys have reached their daily token limit. "
+                        "Optimizer paused — try again tomorrow when limits reset."
+                    )
+                scores.append(0.5)  # neutral score for non-TPD failures
 
         mean_score = sum(scores) / len(scores) if scores else 0.0
         self.storage.save_trial(

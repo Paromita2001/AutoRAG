@@ -2,6 +2,10 @@
 import os
 import sys
 
+# Load .env FIRST before any imports so API keys override any system env vars
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from self_improving_rag.dashboard import run_dashboard

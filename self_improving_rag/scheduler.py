@@ -51,14 +51,14 @@ def nightly_job(
     chroma_dir: str = "./chroma_db",
     db_path: str = "./rag_results.db",
     study_name: str = "nightly",
-    n_trials: int = 10,
+    n_trials: int = 3,
     drift_detector: Optional[DriftDetector] = None,
     username: Optional[str] = None,
 ) -> Dict[str, Any]:
     logger.info("[scheduler] Starting optimization job (user=%s)", username or "global")
 
     # Use this user's real questions if available, else fall back to provided list
-    user_qs = get_questions_for_optimization(username, max_n=20) if username else []
+    user_qs = get_questions_for_optimization(username, max_n=5) if username else []
     if len(user_qs) >= 3:
         questions = [r["question"] for r in user_qs]
         col_name  = best_collection(username)

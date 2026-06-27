@@ -1,6 +1,7 @@
 # ── Secrets (NEVER push these) ────────────────────────────────────────────────
 .env
 users.json
+.streamlit/secrets.toml
 
 # ── User data (personal / private) ───────────────────────────────────────────
 chat_sessions/

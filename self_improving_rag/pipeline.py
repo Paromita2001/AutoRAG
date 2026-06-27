@@ -154,7 +154,7 @@ class RAGPipeline:
         "Be accurate, concise, and honest about uncertainty."
     )
 
-    def generate(self, query: str, chunks: List[Dict[str, Any]]) -> str:
+    def generate(self, query: str, chunks: List[Dict[str, Any]], max_tokens: int = 768) -> str:
         if chunks:
             context = "\n\n".join(c["text"] for c in chunks)
             system = self._SYSTEM_PROMPT
@@ -174,7 +174,7 @@ class RAGPipeline:
                 {"role": "user",   "content": user_msg},
             ],
             temperature=self.config.temperature,
-            max_tokens=768,
+            max_tokens=max_tokens,
         )
         # Tests inject self._groq_client directly; production uses the key pool.
         if self._groq_client is not None:
@@ -183,7 +183,7 @@ class RAGPipeline:
             response = self._get_pool().chat_completions_create(**kwargs)
         return response.choices[0].message.content.strip()
 
-    def query(self, question: str) -> Dict[str, Any]:
+    def query(self, question: str, max_tokens: int = 768) -> Dict[str, Any]:
         t0 = time.perf_counter()
         chunks = self.retrieve(question)
         retrieval_ms = (time.perf_counter() - t0) * 1000
@@ -191,7 +191,7 @@ class RAGPipeline:
         context_text = "\n\n".join(c["text"] for c in chunks)
 
         t1 = time.perf_counter()
-        answer = self.generate(question, chunks)
+        answer = self.generate(question, chunks, max_tokens=max_tokens)
         generation_ms = (time.perf_counter() - t1) * 1000
 
         return {
